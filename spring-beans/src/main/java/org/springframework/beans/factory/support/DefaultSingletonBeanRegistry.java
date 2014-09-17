@@ -119,6 +119,15 @@ public class DefaultSingletonBeanRegistry extends SimpleAliasRegistry implements
 	/** Map between depending bean names: bean name --> Set of bean names for the bean's dependencies */
 	private final Map<String, Set<String>> dependenciesForBeanMap = new ConcurrentHashMap<String, Set<String>>(64);
 
+	/**
+	 * A set of bean names that are known to be scoped (non global) beans. This is represented as a concurrent hash map
+	 * (rather than a synchronized set) so that reads will be non-blocking. It's primary purpose is to prevent
+	 * the lock obtained in "getSingleton" from being obtained when it is called from "AbstractBeanFactory.doGetBean"
+	 * for a bean that is known to be a scoped bean. This greatly improves throughput for web applications that use
+	 * many request scope beans, as it eliminates unnecessary lock contention
+	 */
+	private final Map<String, Boolean> knownScopedBeans = new ConcurrentHashMap<String, Boolean>();
+
 
 	@Override
 	public void registerSingleton(String beanName, Object singletonObject) throws IllegalStateException {
@@ -145,6 +154,7 @@ public class DefaultSingletonBeanRegistry extends SimpleAliasRegistry implements
 			this.singletonFactories.remove(beanName);
 			this.earlySingletonObjects.remove(beanName);
 			this.registeredSingletons.add(beanName);
+			this.knownScopedBeans.remove(beanName);
 		}
 	}
 
@@ -163,6 +173,7 @@ public class DefaultSingletonBeanRegistry extends SimpleAliasRegistry implements
 				this.singletonFactories.put(beanName, singletonFactory);
 				this.earlySingletonObjects.remove(beanName);
 				this.registeredSingletons.add(beanName);
+				this.knownScopedBeans.remove(beanName);
 			}
 		}
 	}
@@ -182,6 +193,11 @@ public class DefaultSingletonBeanRegistry extends SimpleAliasRegistry implements
 	 */
 	protected Object getSingleton(String beanName, boolean allowEarlyReference) {
 		Object singletonObject = this.singletonObjects.get(beanName);
+
+		if (singletonObject == null && knownScopedBeans.containsKey(beanName)) {
+			return null;
+		}
+
 		if (singletonObject == null && isSingletonCurrentlyInCreation(beanName)) {
 			synchronized (this.singletonObjects) {
 				singletonObject = this.earlySingletonObjects.get(beanName);
@@ -604,4 +620,7 @@ public class DefaultSingletonBeanRegistry extends SimpleAliasRegistry implements
 		return this.singletonObjects;
 	}
 
+	protected final void registerKnownScopedBean(String beanName) {
+		this.knownScopedBeans.put(beanName, Boolean.TRUE);
+	}
 }
